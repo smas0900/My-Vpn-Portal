@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
 import jwt from "jsonwebtoken";
+import fs from "fs";
+import path from "path";
 import ConfigsClient from "./ConfigsClient";
 
 export default function ConfigsPage() {
@@ -19,80 +21,67 @@ export default function ConfigsPage() {
     );
   }
 
-  const configFiles = [
-    { name: "Client 1 (Accio)", filename: "Accio.conf" },
-    { name: "Client 2 (Lumos)", filename: "Lumos.conf" },
-    { name: "Client 3 (Expecto)", filename: "Expecto.conf" }
-  ];
+  // Build configFiles dynamically by reading the protected/ directory.
+  // Priority:
+  // 1) CONFIGS env var (JSON mapping: filename -> base64 or raw content)
+  // 2) protected/ directory (local dev)
+  // 3) fallback hard-coded list
+  let configFiles = [];
+
+  // 1) Try CONFIGS env var
+  try {
+    const configsEnv = process.env.CONFIGS;
+    if (configsEnv) {
+      let mapping = {};
+      try {
+        mapping = JSON.parse(configsEnv);
+      } catch (e) {
+        console.warn('CONFIGS env var is not valid JSON');
+      }
+
+      // mapping keys are filenames. We don't decode here; we only need the names
+      configFiles = Object.keys(mapping || {})
+        .filter((f) => typeof f === 'string' && f.toLowerCase().endsWith('.conf'))
+        .map((f) => {
+          const base = f.replace(/\.conf$/i, '');
+          const name = base.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+          return { name, filename: f };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }
+  } catch (err) {
+    console.error('Error parsing CONFIGS env var:', err?.message || err);
+    configFiles = [];
+  }
+
+  // 2) Fallback to protected/ directory for local development
+  if (!configFiles || configFiles.length === 0) {
+    try {
+      const protectedDir = path.join(process.cwd(), 'protected');
+      if (fs.existsSync(protectedDir)) {
+        const files = fs.readdirSync(protectedDir);
+        configFiles = files
+          .filter((f) => f.toLowerCase().endsWith('.conf'))
+          .map((f) => {
+            const base = f.replace(/\.conf$/i, '');
+            const name = base.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+            return { name, filename: f };
+          })
+          .sort((a, b) => a.name.localeCompare(b.name));
+      }
+    } catch (err) {
+      configFiles = [];
+    }
+  }
+
+  // 3) Final fallback
+  if (!configFiles || configFiles.length === 0) {
+    configFiles = [
+      { name: 'Client 1 (Accio)', filename: 'Accio.conf' },
+      { name: 'Client 2 (Lumos)', filename: 'Lumos.conf' },
+      { name: 'Client 3 (Expecto)', filename: 'Expecto.conf' }
+    ];
+  }
 
   return <ConfigsClient configFiles={configFiles} />;
- }
-// import { NextResponse } from "next/server";
-// import { cookies } from "next/headers";
-// import jwt from "jsonwebtoken";
-
-// // Map filenames to environment variable names
-// const CONFIG_FILES = {
-//   "Accio.conf": process.env.ACCIO_CONFIG,
-//   "Lumos.conf": process.env.LUMOS_CONFIG,
-//   "Expecto.conf": process.env.EXPECTO_CONFIG,
-// };
-
-// export async function GET(req, { params }) {
-//   const token = cookies().get("auth_token")?.value;
-  
-//   if (!token) {
-//     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-//   }
-  
-//   try {
-//     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-//     console.log(`File download requested by user: ${decoded.user} for file: ${params.file}`);
-//   } catch (error) {
-//     console.error("JWT verification failed:", error.message);
-//     return NextResponse.json({ error: "Invalid or expired token" }, { status: 401 });
-//   }
-  
-//   const fileName = params.file;
-  
-//   // Validate file name
-//   if (!fileName || !fileName.endsWith(".conf")) {
-//     return NextResponse.json({ error: "Invalid file name - only .conf files allowed" }, { status: 400 });
-//   }
-  
-//   // Prevent directory traversal attacks
-//   if (fileName.includes("..") || fileName.includes("/") || fileName.includes("\\")) {
-//     return NextResponse.json({ error: "Invalid file name - security violation" }, { status: 400 });
-//   }
-  
-//   // Get config content from environment variable
-//   const configBase64 = CONFIG_FILES[fileName];
-  
-//   if (!configBase64) {
-//     console.error(`Configuration not found: ${fileName}. Available configs: ${Object.keys(CONFIG_FILES).join(', ')}`);
-//     return NextResponse.json({ 
-//       error: "Configuration file not found", 
-//       available: Object.keys(CONFIG_FILES) 
-//     }, { status: 404 });
-//   }
-  
-//   try {
-//     // Decode from base64
-//     const fileContent = Buffer.from(configBase64, 'base64');
-    
-//     console.log(`File downloaded successfully: ${fileName}, size: ${fileContent.length} bytes`);
-    
-//     return new NextResponse(fileContent, {
-//       headers: {
-//         "Content-Type": "text/plain",
-//         "Content-Disposition": `attachment; filename="${fileName}"`,
-//         "Cache-Control": "no-cache, no-store, must-revalidate",
-//         "Pragma": "no-cache",
-//         "Expires": "0"
-//       },
-//     });
-//   } catch (error) {
-//     console.error(`Error decoding file ${fileName}:`, error.message);
-//     return NextResponse.json({ error: "Error processing configuration file" }, { status: 500 });
-//   }
-// }
+}
